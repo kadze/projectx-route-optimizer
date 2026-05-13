@@ -1,37 +1,39 @@
-# Dockerfile for routebox-route-optimizer.
-#
-# Single-stage. Base is python:latest — yes, unpinned. We've talked about
-# pinning to python:3.10-slim; we haven't. The build broke on us once
-# when 3.12 became latest and ortools didn't have wheels yet, and we
-# patched it forward by bumping requirements rather than pinning the base.
+# ---- builder --------------------------------------------------------
+# Installs build tools and compiles Python wheels into a venv.
+# Nothing from this stage ships in the final image.
+FROM python:3.11-slim AS builder
 
-FROM python:latest
-
-WORKDIR /app
-
-# Build deps for psycopg2 (libpq-dev) and a few ortools native deps.
-# No --no-install-recommends — we hit a missing transitive dep once
-# during a deploy and stopped using it.
 RUN apt-get update \
-    && apt-get install -y \
+    && apt-get install -y --no-install-recommends \
        build-essential \
        libpq-dev \
-       curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install. Pip cache deliberately left in the layer — `--no-cache-dir`
-# was removed during a debug session and never put back.
-COPY requirements.txt /app/requirements.txt
-RUN pip install -r /app/requirements.txt
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-COPY . /app
+COPY requirements.txt .
+# Strip the "# --- test-only ---" block so test deps don't ship in the image.
+RUN sed '/# --- test-only ---/,$ d' requirements.txt > /tmp/requirements-prod.txt \
+    && pip install --no-cache-dir -r /tmp/requirements-prod.txt
 
-ENV PORT=3000 \
+# ---- runtime --------------------------------------------------------
+# Slim image with only the venv copied in — no compiler, no libpq-dev.
+# psycopg2-binary bundles libpq, so no extra system lib needed at runtime.
+FROM python:3.11-slim AS runtime
+
+# All stable config consolidated before the frequently-changing COPY below.
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
+    PORT=3000 \
     PYTHONUNBUFFERED=1
 
-EXPOSE 3000
+COPY --from=builder $VIRTUAL_ENV $VIRTUAL_ENV
 
-# No HEALTHCHECK. ECS does its own thing via the ALB target group;
-# the local-dev compose checks /healthz from the host.
+WORKDIR /app
+COPY . /app
+
+EXPOSE 3000
 
 CMD ["python", "-m", "src.main"]
