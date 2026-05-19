@@ -1,0 +1,52 @@
+fullname: routebox-route-optimizer
+
+replicaCount: 2
+
+image:
+  repository: 414866527708.dkr.ecr.us-east-1.amazonaws.com/route-optimizer
+  tag: latest
+  pullPolicy: IfNotPresent
+
+namespace: route-optimizer
+
+service:
+  type: ClusterIP
+  port: 3000
+
+config:
+  ENV: production
+  LOG_LEVEL: info
+  PORT: "3000"
+  AWS_REGION: us-east-1
+  SQS_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/414866527708/routebox-staging-route-calc-requests"
+  SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:414866527708:routebox-staging-route-calc-completions"
+  SOLVER_TIME_LIMIT_SECONDS: "30"
+  MAX_CONCURRENT_SOLVES: "2"
+  SQS_WAIT_SECONDS: "20"
+
+secrets:
+  DATABASE_URL: ""
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
